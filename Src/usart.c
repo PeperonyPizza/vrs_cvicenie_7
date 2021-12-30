@@ -19,12 +19,13 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "usart.h"
+#include <string.h>
 
 /* Memory buffer used directly by DMA for USART Rx*/
 uint8_t bufferUSART2dma[DMA_USART2_BUFFER_SIZE];
 
 /* Declaration and initialization of callback function */
-static void (* USART2_ProcessData)(uint8_t data) = 0;
+static void (* USART2_ProcessData)(const uint8_t* data, uint16_t len) = 0;
 
 /* Register callback */
 void USART2_RegisterCallback(void *callback)
@@ -72,12 +73,41 @@ void MX_USART2_UART_Init(void)
   /* USART2_RX Init */
 
   	  // type DMA USART Rx configuration here
+  LL_DMA_SetDataTransferDirection(DMA1, LL_DMA_CHANNEL_6, LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
+  LL_DMA_SetChannelPriorityLevel(DMA1, LL_DMA_CHANNEL_6, LL_DMA_PRIORITY_MEDIUM);
+  LL_DMA_SetMode(DMA1, LL_DMA_CHANNEL_6, LL_DMA_MODE_NORMAL);
+  LL_DMA_SetPeriphIncMode(DMA1, LL_DMA_CHANNEL_6, LL_DMA_PERIPH_NOINCREMENT);
+  LL_DMA_SetMemoryIncMode(DMA1, LL_DMA_CHANNEL_6, LL_DMA_MEMORY_INCREMENT);
+  LL_DMA_SetPeriphSize(DMA1, LL_DMA_CHANNEL_6, LL_DMA_PDATAALIGN_BYTE);
+  LL_DMA_SetMemorySize(DMA1, LL_DMA_CHANNEL_6, LL_DMA_MDATAALIGN_BYTE);
 
+  LL_DMA_ConfigAddresses(DMA1, LL_DMA_CHANNEL_6,
+  						 LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_RECEIVE),
+  						 (uint32_t)bufferUSART2dma,
+  						 LL_DMA_GetDataTransferDirection(DMA1, LL_DMA_CHANNEL_6));
+
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_6, DMA_USART2_BUFFER_SIZE);
+  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
+  LL_USART_EnableDMAReq_RX(USART2);
+
+    LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_6);
+    LL_DMA_EnableIT_HT(DMA1, LL_DMA_CHANNEL_6);
 
   /* USART2_TX Init */
 
 	  // type DMA USART Tx configuration here
+    LL_DMA_SetDataTransferDirection(DMA1, LL_DMA_CHANNEL_7, LL_DMA_DIRECTION_MEMORY_TO_PERIPH);
+    LL_DMA_SetChannelPriorityLevel(DMA1, LL_DMA_CHANNEL_7, LL_DMA_PRIORITY_MEDIUM);
+    LL_DMA_SetMode(DMA1, LL_DMA_CHANNEL_7, LL_DMA_MODE_NORMAL);
+    LL_DMA_SetPeriphIncMode(DMA1, LL_DMA_CHANNEL_7, LL_DMA_PERIPH_NOINCREMENT);
+    LL_DMA_SetMemoryIncMode(DMA1, LL_DMA_CHANNEL_7, LL_DMA_MEMORY_INCREMENT);
+    LL_DMA_SetPeriphSize(DMA1, LL_DMA_CHANNEL_7, LL_DMA_PDATAALIGN_BYTE);
+    LL_DMA_SetMemorySize(DMA1, LL_DMA_CHANNEL_7, LL_DMA_MDATAALIGN_BYTE);
 
+    LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_7, LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_TRANSMIT));
+    LL_USART_EnableDMAReq_TX(USART2);
+
+    LL_DMA_EnableIT_TE(DMA1, LL_DMA_CHANNEL_7);
 
   /* USART2 interrupt Init */
   NVIC_SetPriority(USART2_IRQn, 0);
@@ -97,6 +127,9 @@ void MX_USART2_UART_Init(void)
   /* Enable USART2 peripheral and interrupts*/
 
   	  //type your code here:
+
+  LL_USART_EnableIT_IDLE(USART2);
+  LL_USART_Enable(USART2);
 }
 
 
@@ -119,9 +152,51 @@ void USART2_PutBuffer(uint8_t *buffer, uint8_t length)
  *	Keeps track of pointer pointing to Rx memory buffer and resets the pointer if overflow is possible in next Rx.
  *	Refer to reference manual - "normal memory mode" and "increment memory mode".
  */
+
 void USART2_CheckDmaReception(void)
 {
 	//type your implementation here
+	if(USART2_ProcessData == 0) return;
+
+		static uint16_t old_pos = 0;
+
+		uint16_t pos = DMA_USART2_BUFFER_SIZE - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_6);
+
+		occupied_memory=pos;
+		load=(float)(occupied_memory)/(float)(DMA_USART2_BUFFER_SIZE)*100.0;
+
+		if (pos != old_pos)
+		{
+			if (pos < (DMA_USART2_BUFFER_SIZE-20))
+			{
+				USART2_ProcessData(&bufferUSART2dma[old_pos], pos - old_pos);
+				old_pos = pos;
+			}
+			else
+			{
+
+
+				USART2_ProcessData(&bufferUSART2dma[old_pos], DMA_USART2_BUFFER_SIZE - old_pos);
+				//clear bufferUSART2dma
+				memset(bufferUSART2dma, 0, DMA_USART2_BUFFER_SIZE);
+
+				// as was mentioned in datasheet first needs to be disabled
+				LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
+
+				// them reconfigure
+				LL_DMA_ConfigAddresses(     DMA1, LL_DMA_CHANNEL_6,
+											LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_RECEIVE),
+											(uint32_t)bufferUSART2dma,
+											LL_DMA_GetDataTransferDirection(DMA1, LL_DMA_CHANNEL_6));
+				LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_6, DMA_USART2_BUFFER_SIZE);
+
+				//lastly enabled
+				LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
+
+				old_pos = 0;
+
+			}
+		}
 }
 
 

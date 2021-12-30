@@ -74,4 +74,9 @@ typedef struct
 
 #endif /* __MAIN_H */
 
+uint8_t Buffer_capacity;
+uint16_t occupied_memory;
+float load;
+
+
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
